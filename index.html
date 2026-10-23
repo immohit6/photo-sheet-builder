@@ -307,10 +307,15 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
         sec.photos.slice(s,s+4).forEach(function(p,i){
           var x=M+(i%2)*(cw+gap), top=y+Math.floor(i/2)*(ih+capH+rowGap);
           var k=Math.min(cw/p.w,ih/p.h), dw=p.w*k, dh=p.h*k;
-          doc.addImage(p.url,'JPEG',x+(cw-dw)/2,top+(ih-dh)/2,dw,dh,undefined,'FAST');
-          doc.setFont('helvetica','normal');doc.setFontSize(9.5);doc.setTextColor(40,48,62);
+          doc.setFont('helvetica','normal');doc.setFontSize(9.5);
           var lines=doc.splitTextToSize(p.caption||'',cw).slice(0,2);
-          doc.text(lines,x+cw/2,top+ih+5,{align:'center'});
+          var block=dh+(lines.length?lines.length*4.2+2.5:0);
+          var iy=top+(ih+capH-block)/2;
+          doc.addImage(p.url,'JPEG',x+(cw-dw)/2,iy,dw,dh,undefined,'FAST');
+          if(lines.length){
+            doc.setTextColor(40,48,62);
+            doc.text(lines,x+cw/2,iy+dh+5,{align:'center'});
+          }
         });
         firstPage=false;
       }
