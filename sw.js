@@ -1,6 +1,6 @@
 // Caches the app shell so the builder opens offline after the first visit.
-const CACHE = 'photo-sheet-builder-v3';
-const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'vendor/jspdf.umd.min.js',
+const CACHE = 'photo-sheet-builder-v4';
+const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'vendor/jspdf.umd.min.js', 'vendor/pdf-lib.min.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

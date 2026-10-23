@@ -13,6 +13,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
 <script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
 <style>
 /* Layout: one column of section cards, each with a drop zone and a grid of captioned photos; sticky bar at the bottom makes the PDF. */
 :root{
@@ -70,6 +71,12 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
 .status b{color:var(--fg)}
 .msg{font-size:13px;color:var(--danger);min-height:1em}
 .msg.ok{color:var(--muted)}
+p.hint2{margin:0}
+.hint2{font-size:13px;color:var(--muted)}
+.parts{display:flex;flex-direction:column;gap:8px}
+.part{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:10px}
+.pinfo{min-width:0;flex:1 1 200px}
+.pname{font-weight:600;overflow-wrap:anywhere}
 @media (max-width:640px){
   body{font-size:16px}
   .doc{grid-template-columns:1fr}
@@ -107,6 +114,17 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
 
   <div id="sections" class="wrap" style="gap:14px"></div>
   <div><button class="btn" id="addSection" type="button">Add a section</button></div>
+
+  <section class="section" id="bundle">
+    <div class="shead"><strong>Combine into one file</strong></div>
+    <p class="hint2">Add other PDFs, or finish this sheet and start another. Make PDF joins everything in the order shown here.</p>
+    <label class="drop">
+      <strong>Add PDFs</strong><span>drop PDF files here, or tap to choose</span>
+      <input type="file" id="pdfInput" accept="application/pdf,.pdf" multiple>
+    </label>
+    <div id="parts" class="parts"></div>
+    <div><button class="btn" id="freeze" type="button">Finish this sheet and start another</button></div>
+  </section>
 </div>
 
 <div class="bar">
@@ -123,6 +141,7 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
     title:'',
     subtitle:'',
     filename:'',
+    parts:[],order:['live'],
     sections:[{id:nextId(),title:'',photos:[]}]
   };
   var dragging=null, busy=false;
@@ -145,10 +164,15 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
     return state.sections.reduce(function(n,s){return n+Math.ceil(s.photos.length/4)},0);
   }
   function photoCount(){return state.sections.reduce(function(n,s){return n+s.photos.length},0)}
+  function livePages(){return photoCount()?pageCount():0}
+  function totalPages(){return livePages()+state.parts.reduce(function(n,p){return n+p.pages},0)}
   function updateStatus(){
-    var np=photoCount(), pg=pageCount();
-    $('status').innerHTML='<b>'+np+'</b> photo'+(np===1?'':'s')+' on <b>'+pg+'</b> page'+(pg===1?'':'s');
-    $('make').disabled=busy||np===0;
+    var np=photoCount(), pg=totalPages(), pn=state.parts.length;
+    var t='<b>'+np+'</b> photo'+(np===1?'':'s');
+    if(pn) t+=' + <b>'+pn+'</b> PDF'+(pn===1?'':'s');
+    t+=', <b>'+pg+'</b> page'+(pg===1?'':'s')+' in the file';
+    $('status').innerHTML=t;
+    $('make').disabled=busy||pg===0;
   }
 
   /* ---------- reading photos ---------- */
@@ -278,6 +302,7 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
   function render(){
     var host=$('sections');host.textContent='';
     state.sections.forEach(function(s){host.appendChild(renderSection(s))});
+    renderParts();
     updateStatus();
   }
 
@@ -341,20 +366,143 @@ input[type=text]:focus-visible,button:focus-visible,.drop:focus-within{outline:2
     return Promise.resolve(anchorSave(blob,name));
   }
 
+  /* ---------- combining several PDFs ---------- */
+  function visibleOrder(){
+    return state.order.filter(function(id){return id!=='live'||photoCount()>0});
+  }
+  function partById(id){return state.parts.filter(function(p){return p.id===id})[0]}
+  function moveOrder(id,d){
+    var vis=visibleOrder(), i=vis.indexOf(id), j=i+d;
+    if(i<0||j<0||j>=vis.length) return;
+    var a=state.order.indexOf(vis[i]), b=state.order.indexOf(vis[j]);
+    var t=state.order[a];state.order[a]=state.order[b];state.order[b]=t;
+    renderParts();updateStatus();
+  }
+  function renderParts(){
+    var host=$('parts');host.textContent='';
+    var vis=visibleOrder();
+    if(!vis.length){host.appendChild(el('div','hint2','Nothing here yet. Add photos above, or add PDFs.'));return}
+    vis.forEach(function(id,i){
+      var live=id==='live', part=live?null:partById(id);
+      var row=el('div','part');
+      var info=el('div','pinfo');
+      info.appendChild(el('div','pname',live?('Photo sheet'+(state.title?': '+state.title:'')):part.name));
+      info.appendChild(el('div','hint2',live?(photoCount()+' photos, '+livePages()+' pages (from the sections above)'):(part.pages+(part.pages===1?' page':' pages')+(part.kind==='sheet'?', finished photo sheet':', added PDF'))));
+      var btns=el('div','crow');
+      var l=el('div');l.style.display='flex';l.style.gap='4px';
+      var e=el('button','btn small','Earlier');e.type='button';e.disabled=i===0;e.addEventListener('click',function(){moveOrder(id,-1)});
+      var t=el('button','btn small','Later');t.type='button';t.disabled=i===vis.length-1;t.addEventListener('click',function(){moveOrder(id,1)});
+      l.appendChild(e);l.appendChild(t);btns.appendChild(l);
+      if(!live){
+        var r=el('button','btn small warn','Remove');r.type='button';
+        r.addEventListener('click',function(){
+          state.parts=state.parts.filter(function(p){return p.id!==id});
+          state.order=state.order.filter(function(x){return x!==id});
+          renderParts();updateStatus();
+        });
+        btns.appendChild(r);
+      }
+      row.appendChild(info);row.appendChild(btns);host.appendChild(row);
+    });
+  }
+  function addPdfFiles(files){
+    var list=Array.prototype.slice.call(files).filter(function(f){return f.type==='application/pdf'||/\.pdf$/i.test(f.name)});
+    if(!list.length){say('Those files are not PDFs.');return}
+    var PL=window.PDFLib; if(!PL){say('The PDF tools did not load. Reload the page and try again.');return}
+    var bad=[], chain=Promise.resolve();
+    list.forEach(function(f){
+      chain=chain.then(function(){return f.arrayBuffer()}).then(function(buf){
+        return PL.PDFDocument.load(buf,{ignoreEncryption:true}).then(function(d){
+          var id=nextId();
+          state.parts.push({id:id,name:f.name,bytes:new Uint8Array(buf),pages:d.getPageCount(),kind:'pdf'});
+          state.order.push(id);
+        });
+      }).catch(function(){bad.push(f.name)});
+    });
+    chain.then(function(){
+      renderParts();updateStatus();
+      if(bad.length) say('Could not open '+bad.join(', ')+'. It may be damaged or password protected.');
+      else say(list.length+' PDF'+(list.length===1?'':'s')+' added.',true);
+    });
+  }
+  (function(){
+    var inp=$('pdfInput'), drop=inp.parentNode;
+    inp.addEventListener('change',function(){addPdfFiles(inp.files);inp.value=''});
+    drop.addEventListener('dragover',function(e){e.preventDefault();drop.classList.add('over')});
+    drop.addEventListener('dragleave',function(){drop.classList.remove('over')});
+    drop.addEventListener('drop',function(e){
+      e.preventDefault();drop.classList.remove('over');
+      if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length) addPdfFiles(e.dataTransfer.files);
+    });
+  })();
+  $('freeze').addEventListener('click',function(){
+    if(!photoCount()){say('Add some photos to this sheet first.');return}
+    var blob;
+    try{blob=buildPdf()}catch(e){say('Could not build the sheet. Reload the page and try again.');return}
+    var name=(state.title||'Photo sheet').trim()||'Photo sheet', pages=pageCount();
+    blob.arrayBuffer().then(function(buf){
+      var id=nextId();
+      state.parts.push({id:id,name:name,bytes:new Uint8Array(buf),pages:pages,kind:'sheet'});
+      state.order.splice(state.order.indexOf('live'),0,id);
+      state.sections=[{id:nextId(),title:'',photos:[]}];
+      $('docTitle').value='';$('docSub').value='';state.title='';state.subtitle='';
+      render();
+      say('Sheet saved to the bundle. Start the next one above.',true);
+      window.scrollTo({top:0,behavior:'smooth'});
+    });
+  });
+  function assemble(){
+    var PL=window.PDFLib, out, chain;
+    return PL.PDFDocument.create().then(function(o){
+      out=o;chain=Promise.resolve();
+      visibleOrder().forEach(function(id){
+        chain=chain.then(function(){
+          if(id==='live') return buildPdf().arrayBuffer();
+          return partById(id).bytes;
+        }).then(function(bytes){
+          return PL.PDFDocument.load(bytes,{ignoreEncryption:true});
+        }).then(function(src){
+          return out.copyPages(src,src.getPageIndices());
+        }).then(function(pages){pages.forEach(function(p){out.addPage(p)})});
+      });
+      return chain;
+    }).then(function(){return out.save()}).then(function(bytes){return new Blob([bytes],{type:'application/pdf'})});
+  }
+
+  function anchorSave(blob,name){
+    var u=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=u;a.download=name+'.pdf';document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(u)},60000);
+    return 'saved';
+  }
+  function saveBlob(blob,name){
+    var file=null;
+    try{file=new File([blob],name+'.pdf',{type:'application/pdf'})}catch(_){}
+    if(file&&navigator.canShare&&navigator.canShare({files:[file]})){
+      return navigator.share({files:[file],title:name}).then(function(){return 'shared'}).catch(function(err){
+        if(err&&err.name==='AbortError') throw err;
+        return anchorSave(blob,name);
+      });
+    }
+    return Promise.resolve(anchorSave(blob,name));
+  }
+
   $('make').addEventListener('click',function(){
-    if(busy||!photoCount()) return;
+    if(busy||!totalPages()) return;
     var missing=0;state.sections.forEach(function(s){s.photos.forEach(function(p){if(!p.caption.trim())missing++})});
     busy=true;updateStatus();say('Building the PDF…',true);
     setTimeout(function(){
-      var blob;
-      try{blob=buildPdf()}catch(e){busy=false;updateStatus();say('Could not build the PDF. Reload the page and try again.');return}
-      var name=(state.filename||'Photo_Sheet').replace(/[\\/:*?"<>|]+/g,'').replace(/\.pdf$/i,'').trim()||'Photo_Sheet';
-      saveBlob(blob,name).then(function(how){
+      var made;
+      try{made=state.parts.length?assemble():Promise.resolve(buildPdf())}catch(e){made=Promise.reject(e)}
+      made.then(function(blob){
+        var name=(state.filename||'Photo_Sheet').replace(/[\\/:*?"<>|]+/g,'').replace(/\.pdf$/i,'').trim()||'Photo_Sheet';
+        return saveBlob(blob,name);
+      }).then(function(how){
         busy=false;updateStatus();
         say((how==='shared'?'Shared. Choose Save to Files to keep it.':'Saved.')+(missing?' '+missing+' photo'+(missing===1?' has':'s have')+' no caption.':''),true);
       }).catch(function(err){
         busy=false;updateStatus();
-        say(err&&err.name==='AbortError'?'Not saved. Press Make PDF again when you are ready.':'The PDF could not be saved here.');
+        say(err&&err.name==='AbortError'?'Not saved. Press Make PDF again when you are ready.':'Could not build or save the PDF. Reload the page and try again.');
       });
     },30);
   });
